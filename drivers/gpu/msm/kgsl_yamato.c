@@ -1068,7 +1068,6 @@ int kgsl_yamato_regread(struct kgsl_device *device, unsigned int offsetwords,
 {
 	unsigned int *reg;
 
-	KGSL_PRE_HWACCESS();
 	if (offsetwords*sizeof(uint32_t) >= device->regspace.sizebytes) {
 		KGSL_DRV_ERR("invalid offset %d\n", offsetwords);
 		return -ERANGE;
@@ -1085,7 +1084,7 @@ int kgsl_yamato_regwrite(struct kgsl_device *device, unsigned int offsetwords,
 				unsigned int value)
 {
 	unsigned int *reg;
-	KGSL_PRE_HWACCESS();
+
 	if (offsetwords*sizeof(uint32_t) >= device->regspace.sizebytes) {
 		KGSL_DRV_ERR("invalid offset %d\n", offsetwords);
 		return -ERANGE;

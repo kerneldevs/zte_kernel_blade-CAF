@@ -1,12 +1,3 @@
-/*
- *  linux/include/linux/mmc/host.h
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- *  Host driver specific definitions.
- */
 #ifndef LINUX_MMC_HOST_H
 #define LINUX_MMC_HOST_H
 
@@ -14,7 +5,6 @@
 #include <linux/sched.h>
 
 #include <linux/mmc/core.h>
-#include <linux/mmc/pm.h>
 
 struct mmc_ios {
 	unsigned int	clock;			/* clock rate */
@@ -53,56 +43,9 @@ struct mmc_ios {
 };
 
 struct mmc_host_ops {
-	/*
-	 * Hosts that support power saving can use the 'enable' and 'disable'
-	 * methods to exit and enter power saving states. 'enable' is called
-	 * when the host is claimed and 'disable' is called (or scheduled with
-	 * a delay) when the host is released. The 'disable' is scheduled if
-	 * the disable delay set by 'mmc_set_disable_delay()' is non-zero,
-	 * otherwise 'disable' is called immediately. 'disable' may be
-	 * scheduled repeatedly, to permit ever greater power saving at the
-	 * expense of ever greater latency to re-enable. Rescheduling is
-	 * determined by the return value of the 'disable' method. A positive
-	 * value gives the delay in milliseconds.
-	 *
-	 * In the case where a host function (like set_ios) may be called
-	 * with or without the host claimed, enabling and disabling can be
-	 * done directly and will nest correctly. Call 'mmc_host_enable()' and
-	 * 'mmc_host_lazy_disable()' for this purpose, but note that these
-	 * functions must be paired.
-	 *
-	 * Alternatively, 'mmc_host_enable()' may be paired with
-	 * 'mmc_host_disable()' which calls 'disable' immediately.  In this
-	 * case the 'disable' method will be called with 'lazy' set to 0.
-	 * This is mainly useful for error paths.
-	 *
-	 * Because lazy disable may be called from a work queue, the 'disable'
-	 * method must claim the host when 'lazy' != 0, which will work
-	 * correctly because recursion is detected and handled.
-	 */
 	int (*enable)(struct mmc_host *host);
 	int (*disable)(struct mmc_host *host, int lazy);
 	void	(*request)(struct mmc_host *host, struct mmc_request *req);
-	/*
-	 * Avoid calling these three functions too often or in a "fast path",
-	 * since underlaying controller might implement them in an expensive
-	 * and/or slow way.
-	 *
-	 * Also note that these functions might sleep, so don't call them
-	 * in the atomic contexts!
-	 *
-	 * Return values for the get_ro callback should be:
-	 *   0 for a read/write card
-	 *   1 for a read-only card
-	 *   -ENOSYS when not supported (equal to NULL callback)
-	 *   or a negative errno value when something bad happened
-	 *
-	 * Return values for the get_cd callback should be:
-	 *   0 for a absent card
-	 *   1 for a present card
-	 *   -ENOSYS when not supported (equal to NULL callback)
-	 *   or a negative errno value when something bad happened
-	 */
 	void	(*set_ios)(struct mmc_host *host, struct mmc_ios *ios);
 	int	(*get_ro)(struct mmc_host *host);
 	int	(*get_cd)(struct mmc_host *host);
@@ -154,8 +97,6 @@ struct mmc_host {
 #define MMC_CAP_NONREMOVABLE	(1 << 8)	/* Nonremovable e.g. eMMC */
 #define MMC_CAP_WAIT_WHILE_BUSY	(1 << 9)	/* Waits while card is busy */
 
-	mmc_pm_flag_t		pm_caps;	/* supported pm features */
-
 	/* host specific block data */
 	unsigned int		max_seg_size;	/* see blk_queue_max_segment_size */
 	unsigned short		max_hw_segs;	/* see blk_queue_max_hw_segments */
@@ -205,8 +146,6 @@ struct mmc_host {
 	struct task_struct	*sdio_irq_thread;
 	atomic_t		sdio_irq_thread_abort;
 
-	mmc_pm_flag_t		pm_flags;	/* requested pm features */
-
 #ifdef CONFIG_LEDS_TRIGGERS
 	struct led_trigger	*led;		/* activity led */
 #endif
@@ -221,6 +160,8 @@ struct mmc_host {
 		int				num_funcs;
 	} embedded_sdio_data;
 #endif
+
+    int    last_suspend_error;
 
 #ifdef CONFIG_MMC_PERF_PROFILING
 	struct {

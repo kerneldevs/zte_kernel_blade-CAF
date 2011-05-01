@@ -479,10 +479,8 @@ static void msm_hsusb_request_host(void *handle, int request)
 		msm_xusb_disable_clks(mhcd);
 		wake_lock_timeout(&mhcd->wlock, HZ/2);
 		msm_xusb_pm_qos_update(mhcd, 0);
-		if (PHY_TYPE(pdata->phy_info) == USB_PHY_INTEGRATED) {
-			otg->reset(mhcd->xceiv);
+		if (PHY_TYPE(pdata->phy_info) == USB_PHY_INTEGRATED)
 			otg_set_suspend(mhcd->xceiv, 1);
-		}
 		break;
 	}
 }

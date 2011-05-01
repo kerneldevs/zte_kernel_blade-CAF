@@ -183,7 +183,6 @@ int kgsl_regread(struct kgsl_device *device, unsigned int offsetwords,
 			unsigned int *value)
 {
 	int status = -ENXIO;
-
 	if (device->ftbl.device_regread)
 		status = device->ftbl.device_regread(device, offsetwords,
 					value);
@@ -531,7 +530,6 @@ static int kgsl_release(struct inode *inodep, struct file *filep)
 	device = kgsl_driver.devp[iminor(inodep)];
 	BUG_ON(device == NULL);
 
-	mutex_lock(&kgsl_driver.mutex);
 	KGSL_PRE_HWACCESS();
 
 	dev_priv = (struct kgsl_device_private *) filep->private_data;
@@ -995,14 +993,15 @@ static long kgsl_ioctl_sharedmem_from_vmalloc(struct kgsl_file_private *private,
 		goto error;
 	}
 
+	if ((private->vmalloc_size + len) > KGSL_GRAPHICS_MEMORY_LOW_WATERMARK
+	    && !param.force_no_low_watermark) {
+		result = -ENOMEM;
+		goto error;
+	}
+
 	list_for_each_entry_safe(entry, entry_tmp,
 				&private->preserve_entry_list, list) {
-		/* make sure that read only pages aren't accidently
-		 * used when read-write pages are requested
-		 */
-		if (entry->memdesc.size == len &&
-		    ((entry->memdesc.priv & KGSL_MEMFLAGS_GPUREADONLY) ==
-		    (param.flags & KGSL_MEMFLAGS_GPUREADONLY))) {
+		if (entry->memdesc.size == len) {
 			list_del(&entry->list);
 			found = 1;
 			break;
@@ -1029,9 +1028,7 @@ static long kgsl_ioctl_sharedmem_from_vmalloc(struct kgsl_file_private *private,
 		result =
 		    kgsl_mmu_map(private->pagetable,
 			(unsigned long)vmalloc_area, len,
-			GSL_PT_PAGE_RV |
-			((param.flags & KGSL_MEMFLAGS_GPUREADONLY) ?
-			0 : GSL_PT_PAGE_WV),
+			GSL_PT_PAGE_RV | GSL_PT_PAGE_WV,
 			&entry->memdesc.gpuaddr, KGSL_MEMFLAGS_ALIGN4K |
 						KGSL_MEMFLAGS_VMALLOC_MEM);
 		if (result != 0)
@@ -1040,8 +1037,7 @@ static long kgsl_ioctl_sharedmem_from_vmalloc(struct kgsl_file_private *private,
 		entry->memdesc.pagetable = private->pagetable;
 		entry->memdesc.size = len;
 		entry->memdesc.priv = KGSL_MEMFLAGS_VMALLOC_MEM |
-			    KGSL_MEMFLAGS_CACHE_CLEAN |
-			    (param.flags & KGSL_MEMFLAGS_GPUREADONLY);
+			    KGSL_MEMFLAGS_CACHE_CLEAN;
 		entry->memdesc.physaddr = (unsigned long)vmalloc_area;
 		entry->priv = private;
 		private->vmalloc_size += len;
@@ -1257,8 +1253,7 @@ static long kgsl_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 
 	KGSL_DRV_VDBG("filep %p cmd 0x%08x arg 0x%08lx\n", filep, cmd, arg);
 
-	mutex_lock(&kgsl_driver.mutex);
-
+	KGSL_PRE_HWACCESS();
 	switch (cmd) {
 
 	case IOCTL_KGSL_DEVICE_GETPROPERTY:
@@ -1327,6 +1322,7 @@ static long kgsl_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 							dev_priv->process_priv,
 							   (void __user *)arg);
 		break;
+
 	case IOCTL_KGSL_SHAREDMEM_FLUSH_CACHE:
 		if (kgsl_cache_enable)
 			result =

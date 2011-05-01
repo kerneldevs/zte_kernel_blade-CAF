@@ -63,7 +63,8 @@ static int msm_rpc_connect_timeout_ms;
 module_param_named(connect_timeout, msm_rpc_connect_timeout_ms,
 		   int, S_IRUGO | S_IWUSR | S_IWGRP);
 
-static int smd_rpcrouter_debug_mask;
+
+static int smd_rpcrouter_debug_mask = SMEM_LOG;
 module_param_named(debug_mask, smd_rpcrouter_debug_mask,
 		   int, S_IRUGO | S_IWUSR | S_IWGRP);
 
@@ -1415,7 +1416,7 @@ int msm_rpc_write(struct msm_rpc_endpoint *ept, void *buffer, int count)
 	struct rr_header hdr;
 	struct rpc_request_hdr *rq = buffer;
 	struct rr_remote_endpoint *r_ept;
-	struct msm_rpc_reply *reply = NULL;
+	struct msm_rpc_reply *reply;
 	int max_tx;
 	int tx_cnt;
 	char *tx_buf;
@@ -1469,6 +1470,7 @@ int msm_rpc_write(struct msm_rpc_endpoint *ept, void *buffer, int count)
 		}
 		hdr.dst_pid = reply->pid;
 		hdr.dst_cid = reply->cid;
+		set_avail_reply(ept, reply);
 		IO("REPLY to xid=%d @ %d:%08x (%d bytes)\n",
 		   be32_to_cpu(rq->xid), hdr.dst_pid, hdr.dst_cid, count);
 	}
@@ -1521,15 +1523,9 @@ int msm_rpc_write(struct msm_rpc_endpoint *ept, void *buffer, int count)
 	}
 
  write_release_lock:
+
 	/* if reply, release wakelock after writing to the transport */
 	if (rq->type != 0) {
-		/* Upon failure, add reply tag to the pending list.
-		** Else add reply tag to the avail/free list. */
-		if (count < 0)
-			set_pend_reply(ept, reply);
-		else
-			set_avail_reply(ept, reply);
-
 		spin_lock_irqsave(&ept->reply_q_lock, flags);
 		if (list_empty(&ept->reply_pend_q)) {
 			D("%s: release reply lock on ept %p\n", __func__, ept);
@@ -1729,6 +1725,8 @@ int __msm_rpc_read(struct msm_rpc_endpoint *ept,
 
 	spin_lock_irqsave(&ept->read_q_lock, flags);
 	if (list_empty(&ept->read_q)) {
+		wake_unlock(&ept->read_q_wake_lock);
+		printk("[SMD] fix rpc_read wakelock deadlock bug\n");
 		spin_unlock_irqrestore(&ept->read_q_lock, flags);
 		return -EAGAIN;
 	}

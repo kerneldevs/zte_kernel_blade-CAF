@@ -46,6 +46,7 @@
 #include <linux/uaccess.h>
 #include <linux/wakelock.h>
 
+
 static const char driver_name[] = "msm72k_udc";
 
 /* #define DEBUG */
@@ -179,11 +180,14 @@ struct usb_info {
 	void (*phy_reset)(void);
 
 	/* max power requested by selected configuration */
+
 	unsigned b_max_pow;
 	enum chg_type chg_type;
 	unsigned chg_current;
+#ifdef ARM11_DETECT_CHG
 	struct delayed_work chg_det;
 	struct delayed_work chg_stop;
+#endif
 
 	struct work_struct work;
 	unsigned phy_status;
@@ -219,6 +223,7 @@ static void flush_endpoint(struct msm_endpoint *ept);
 static void msm72k_pm_qos_update(int);
 
 
+
 static void msm_hsusb_set_state(enum usb_device_state state)
 {
 	unsigned long flags;
@@ -252,7 +257,7 @@ static ssize_t print_switch_state(struct switch_dev *sdev, char *buf)
 	return sprintf(buf, "%s\n",
 			(atomic_read(&ui->configured) ? "online" : "offline"));
 }
-
+#ifdef ARM11_DETECT_CHG
 static inline enum chg_type usb_get_chg_type(struct usb_info *ui)
 {
 	if ((readl(USB_PORTSC) & PORTSC_LS) == PORTSC_LS)
@@ -306,7 +311,6 @@ static void usb_chg_stop(struct work_struct *w)
 static void usb_chg_detect(struct work_struct *w)
 {
 	struct usb_info *ui = container_of(w, struct usb_info, chg_det.work);
-	struct msm_otg *otg = to_msm_otg(ui->xceiv);
 	enum chg_type temp = USB_CHG_TYPE__INVALID;
 	unsigned long flags;
 	int maxpower;
@@ -321,7 +325,6 @@ static void usb_chg_detect(struct work_struct *w)
 	spin_unlock_irqrestore(&ui->lock, flags);
 
 	hsusb_chg_connected(temp);
-	atomic_set(&otg->chg_type, temp);
 	maxpower = usb_get_max_power(ui);
 	if (maxpower > 0)
 		hsusb_chg_vbus_draw(maxpower);
@@ -334,16 +337,11 @@ static void usb_chg_detect(struct work_struct *w)
 	 * driver will reacquire wakelocks for any sub-sequent usb interrupts.
 	 * */
 	if (temp == USB_CHG_TYPE__WALLCHARGER) {
-		/* Workaround: Reset PHY in SE1 state */
-		otg->reset(ui->xceiv);
-		/* select DEVICE mode */
-		writel(0x12, USB_USBMODE);
-		msleep(1);
-		otg_set_suspend(ui->xceiv, 1);
 		msm72k_pm_qos_update(0);
 		wake_unlock(&ui->wlock);
 	}
 }
+#endif
 
 static int usb_ep_get_stall(struct msm_endpoint *ept)
 {
@@ -1064,7 +1062,9 @@ static irqreturn_t usb_interrupt(int irq, void *data)
 
 		msm_hsusb_set_state(USB_STATE_DEFAULT);
 		atomic_set(&ui->remote_wakeup, 0);
+		#ifdef ARM11_DETECT_CHG
 		schedule_delayed_work(&ui->chg_stop, 0);
+		#endif
 
 		writel(readl(USB_ENDPTSETUPSTAT), USB_ENDPTSETUPSTAT);
 		writel(readl(USB_ENDPTCOMPLETE), USB_ENDPTCOMPLETE);
@@ -1142,8 +1142,10 @@ static void usb_prepare(struct usb_info *ui)
 		usb_ept_alloc_req(&ui->ep0in, SETUP_BUF_SIZE, GFP_KERNEL);
 
 	INIT_WORK(&ui->work, usb_do_work);
+#ifdef ARM11_DETECT_CHG
 	INIT_DELAYED_WORK(&ui->chg_det, usb_chg_detect);
 	INIT_DELAYED_WORK(&ui->chg_stop, usb_chg_stop);
+#endif
 	INIT_DELAYED_WORK(&ui->rw_work, usb_do_remote_wakeup);
 }
 
@@ -1204,8 +1206,9 @@ static int usb_free(struct usb_info *ui, int ret)
 	if (ui->xceiv)
 		otg_put_transceiver(ui->xceiv);
 
+#ifdef ARM11_DETECT_CHG
 	hsusb_chg_init(0);
-
+#endif
 	if (ui->irq)
 		free_irq(ui->irq, 0);
 	if (ui->pool)
@@ -1302,9 +1305,11 @@ static void usb_do_work(struct work_struct *w)
 				ui->irq = otg->irq;
 				msm72k_pullup_internal(&ui->gadget, 1);
 
+#ifdef ARM11_DETECT_CHG
 				schedule_delayed_work(
 						&ui->chg_det,
 						USB_CHG_DET_DELAY);
+#endif
 
 				ui->state = USB_STATE_ONLINE;
 				usb_do_work_check_vbus(ui);
@@ -1320,8 +1325,8 @@ static void usb_do_work(struct work_struct *w)
 			 * the signal to go offline, we must honor it
 			 */
 			if (flags & USB_FLAG_VBUS_OFFLINE) {
+#ifdef ARM11_DETECT_CHG
 				enum chg_type temp;
-				struct msm_otg *otg = to_msm_otg(ui->xceiv);
 
 				spin_lock_irqsave(&ui->lock, iflags);
 				temp = ui->chg_type;
@@ -1330,11 +1335,11 @@ static void usb_do_work(struct work_struct *w)
 				spin_unlock_irqrestore(&ui->lock, iflags);
 				if (temp == USB_CHG_TYPE__WALLCHARGER)
 					msm72k_pm_qos_update(1);
-
+#endif
 				dev_info(&ui->pdev->dev,
 					"msm72k_udc: ONLINE -> OFFLINE\n");
 				otg_set_suspend(ui->xceiv, 0);
-
+				atomic_set(&ui->configured, 0);
 				atomic_set(&ui->running, 0);
 				atomic_set(&ui->remote_wakeup, 0);
 				atomic_set(&ui->configured, 0);
@@ -1344,6 +1349,7 @@ static void usb_do_work(struct work_struct *w)
 				msm72k_pullup_internal(&ui->gadget, 0);
 				spin_unlock_irqrestore(&ui->lock, iflags);
 
+#ifdef ARM11_DETECT_CHG
 				cancel_delayed_work(&ui->chg_det);
 
 				/* if charger is initialized to known type
@@ -1353,6 +1359,7 @@ static void usb_do_work(struct work_struct *w)
 				if (temp != USB_CHG_TYPE__INVALID)
 					hsusb_chg_connected(
 						USB_CHG_TYPE__INVALID);
+#endif
 
 				if (ui->irq) {
 					free_irq(ui->irq, ui);
@@ -1370,7 +1377,6 @@ static void usb_do_work(struct work_struct *w)
 
 				switch_set_state(&ui->sdev, 0);
 				/* power down phy, clock down usb */
-				otg->reset(ui->xceiv);
 				otg_set_suspend(ui->xceiv, 1);
 
 				ui->state = USB_STATE_OFFLINE;
@@ -1380,12 +1386,14 @@ static void usb_do_work(struct work_struct *w)
 				break;
 			}
 			if (flags & USB_FLAG_SUSPEND) {
+#ifdef ARM11_DETECT_CHG
 				int maxpower = usb_get_max_power(ui);
 
 				if (maxpower < 0)
 					break;
 
 				hsusb_chg_vbus_draw(0);
+#endif
 				/* To support TCXO during bus suspend
 				 * This might be dummy check since bus suspend
 				 * is not implemented as of now
@@ -1397,7 +1405,9 @@ static void usb_do_work(struct work_struct *w)
 				break;
 			}
 			if (flags & USB_FLAG_CONFIGURED) {
+#ifdef ARM11_DETECT_CHG
 				int maxpower = usb_get_max_power(ui);
+#endif
 
 				/* We may come here even when no configuration
 				 * is selected. Send online/offline event
@@ -1406,11 +1416,13 @@ static void usb_do_work(struct work_struct *w)
 				switch_set_state(&ui->sdev,
 						atomic_read(&ui->configured));
 
+#ifdef ARM11_DETECT_CHG
 				if (maxpower < 0)
 					break;
 
 				ui->chg_current = maxpower;
 				hsusb_chg_vbus_draw(maxpower);
+#endif
 				break;
 			}
 			if (flags & USB_FLAG_RESET) {
@@ -1456,9 +1468,11 @@ static void usb_do_work(struct work_struct *w)
 				enable_irq_wake(otg->irq);
 				msm72k_pullup_internal(&ui->gadget, 1);
 
+#ifdef ARM11_DETECT_CHG
 				schedule_delayed_work(
 						&ui->chg_det,
 						USB_CHG_DET_DELAY);
+#endif
 			}
 			break;
 		}
@@ -2060,7 +2074,9 @@ static ssize_t store_usb_chg_current(struct device *dev,
 		return -EINVAL;
 
 	ui->chg_current = mA;
+#ifdef ARM11_DETECT_CHG
 	hsusb_chg_vbus_draw(mA);
+#endif
 
 	return count;
 }
@@ -2117,7 +2133,9 @@ static int msm72k_probe(struct platform_device *pdev)
 	}
 
 	ui->chg_type = USB_CHG_TYPE__INVALID;
+#ifdef ARM11_DETECT_CHG
 	hsusb_chg_init(1);
+#endif
 
 	ui->buf = dma_alloc_coherent(&pdev->dev, 4096, &ui->dma, GFP_KERNEL);
 	if (!ui->buf)
@@ -2267,11 +2285,6 @@ int usb_gadget_unregister_driver(struct usb_gadget_driver *driver)
 		return -EINVAL;
 
 	msm72k_pullup_internal(&dev->gadget, 0);
-	if (dev->irq) {
-		free_irq(dev->irq, dev);
-		dev->irq = 0;
-	}
-
 	dev->state = USB_STATE_IDLE;
 	atomic_set(&dev->configured, 0);
 	switch_set_state(&dev->sdev, 0);

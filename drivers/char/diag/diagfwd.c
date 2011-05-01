@@ -389,7 +389,7 @@ static int diag_process_apps_pkt(unsigned char *buf, int len)
 		subsys_cmd_code = *(uint16_t *)temp;
 		temp += 2;
 
-		for (i = 0; i < diag_max_registration; i++) {
+		for (i = 0; i < REG_TABLE_SIZE; i++) {
 			if (driver->table[i].process_id != 0) {
 				if (driver->table[i].cmd_code ==
 				     cmd_code && driver->table[i].subsys_id ==
@@ -435,7 +435,7 @@ static int diag_process_apps_pkt(unsigned char *buf, int len)
 					}
 				} /* end of else-if */
 			} /* if(driver->table[i].process_id != 0) */
-		}  /* for (i = 0; i < diag_max_registration; i++) */
+		}  /* for (i = 0; i < REG_TABLE_SIZE; i++) */
 	} /* else */
 		return packet_type;
 }
@@ -528,21 +528,20 @@ int diagfwd_disconnect(void)
 int diagfwd_write_complete(struct diag_request *diag_write_ptr)
 {
 	unsigned char *buf = diag_write_ptr->buf;
-	unsigned long flags = 0;
 	/*Determine if the write complete is for data from arm9/apps/q6 */
 	/* Need a context variable here instead */
 	if (buf == (void *)driver->usb_buf_in) {
 		driver->in_busy = 0;
 		APPEND_DEBUG('o');
-		spin_lock_irqsave(&diagchar_smd_lock, flags);
+		spin_lock(&diagchar_smd_lock);
 		__diag_smd_send_req(NON_SMD_CONTEXT);
-		spin_unlock_irqrestore(&diagchar_smd_lock, flags);
+		spin_unlock(&diagchar_smd_lock);
 	} else if (buf == (void *)driver->usb_buf_in_qdsp) {
 		driver->in_busy_qdsp = 0;
 		APPEND_DEBUG('p');
-		spin_lock_irqsave(&diagchar_smd_qdsp_lock, flags);
+		spin_lock(&diagchar_smd_qdsp_lock);
 		__diag_smd_qdsp_send_req(NON_SMD_CONTEXT);
-		spin_unlock_irqrestore(&diagchar_smd_qdsp_lock, flags);
+		spin_unlock(&diagchar_smd_qdsp_lock);
 	} else {
 		diagmem_free(driver, (unsigned char *)buf, POOL_TYPE_HDLC);
 		diagmem_free(driver, (unsigned char *)diag_write_ptr,
@@ -579,19 +578,17 @@ static struct diag_operations diagfwdops = {
 
 static void diag_smd_notify(void *ctxt, unsigned event)
 {
-	unsigned long flags = 0;
-	spin_lock_irqsave(&diagchar_smd_lock, flags);
+	spin_lock(&diagchar_smd_lock);
 	__diag_smd_send_req(SMD_CONTEXT);
-	spin_unlock_irqrestore(&diagchar_smd_lock, flags);
+	spin_unlock(&diagchar_smd_lock);
 }
 
 #if defined(CONFIG_MSM_N_WAY_SMD)
 static void diag_smd_qdsp_notify(void *ctxt, unsigned event)
 {
-	unsigned long flags = 0;
-	spin_lock_irqsave(&diagchar_smd_qdsp_lock, flags);
+	spin_lock(&diagchar_smd_qdsp_lock);
 	__diag_smd_qdsp_send_req(SMD_CONTEXT);
-	spin_unlock_irqrestore(&diagchar_smd_qdsp_lock, flags);
+	spin_unlock(&diagchar_smd_qdsp_lock);
 }
 #endif
 
@@ -682,11 +679,11 @@ void diagfwd_init(void)
 	if (driver->buf_tbl == NULL)
 		goto err;
 	if (driver->data_ready == NULL &&
-	     (driver->data_ready = kzalloc(driver->num_clients * 4,
+	     (driver->data_ready = kzalloc(driver->num_clients,
 					    GFP_KERNEL)) == NULL)
 		goto err;
 	if (driver->table == NULL &&
-	     (driver->table = kzalloc(diag_max_registration*
+	     (driver->table = kzalloc(REG_TABLE_SIZE*
 				      sizeof(struct diag_master_table),
 				       GFP_KERNEL)) == NULL)
 		goto err;

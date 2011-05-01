@@ -226,7 +226,7 @@ static void smd_net_data_handler(unsigned long arg)
 	struct sk_buff *skb;
 	void *ptr = 0;
 	int sz;
-	u32 opmode = p->operation_mode;
+	u32 opmode;
 	unsigned long flags;
 
 	for (;;) {
@@ -234,11 +234,9 @@ static void smd_net_data_handler(unsigned long arg)
 		if (sz == 0) break;
 		if (smd_read_avail(p->ch) < sz) break;
 
-		if (RMNET_IS_MODE_IP(opmode) ? (sz > dev->mtu) :
-						(sz > (dev->mtu + ETH_HLEN))) {
+		if (sz > dev->mtu) {
 			pr_err("rmnet_recv() discarding %d len (%d mtu)\n",
-				sz, RMNET_IS_MODE_IP(opmode) ?
-					dev->mtu : (dev->mtu + ETH_HLEN));
+				sz, dev->mtu);
 			ptr = 0;
 		} else {
 			skb = dev_alloc_skb(sz + NET_IP_ALIGN);
