@@ -171,6 +171,12 @@
 
 #define NR_SG		32
 
+/*
+ * Set the request timeout to 10secs to allow
+ * bad cards/controller to respond.
+ */
+#define MSM_MMC_REQ_TIMEOUT	10000 /* msecs */
+
 struct clk;
 
 struct msmsdcc_nc_dmadata {
