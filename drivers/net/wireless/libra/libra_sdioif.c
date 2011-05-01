@@ -334,49 +334,7 @@ static void libra_sdio_remove(struct sdio_func *func)
 	libra_sdio_func = NULL;
 
 	printk(KERN_INFO "%s : Module removed.\n", __func__);
-}
-
-static int libra_sdio_suspend(struct device *dev)
-{
-	struct sdio_func *func = dev_to_sdio_func(dev);
-	int ret = 0;
-
-	ret = sdio_set_host_pm_flags(func, MMC_PM_KEEP_POWER);
-
-	if (ret) {
-		printk(KERN_ERR "%s: Error Host doesn't support the keep power capability\n" ,
-			__func__);
-		return ret;
-	}
-	if (libra_suspend_hldr) {
-		/* Disable SDIO IRQ when driver is being suspended */
-		libra_enable_sdio_irq(func, 0);
-		ret = libra_suspend_hldr(func);
-		if (ret) {
-			printk(KERN_ERR
-			"%s: Libra driver is not able to suspend\n" , __func__);
-			/* Error - Restore SDIO IRQ */
-			libra_enable_sdio_irq(func, 1);
-			return ret;
-		}
-	}
-
-
-	return sdio_set_host_pm_flags(func, MMC_PM_WAKE_SDIO_IRQ);
-}
-
-static int libra_sdio_resume(struct device *dev)
-{
-	struct sdio_func *func = dev_to_sdio_func(dev);
-
-	if (libra_resume_hldr) {
-		libra_resume_hldr(func);
-		/* Restore SDIO IRQ */
-		libra_enable_sdio_irq(func, 1);
-	}
-
-	return 0;
-}
+}	
 
 
 static struct sdio_device_id libra_sdioid[] = {

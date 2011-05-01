@@ -184,8 +184,6 @@ msmsdcc_request_end(struct msmsdcc_host *host, struct mmc_request *mrq)
 	host->curr.mrq = NULL;
 	host->curr.cmd = NULL;
 
-	del_timer(&host->req_tout_timer);
-
 	if (mrq->data)
 		mrq->data->bytes_xfered = host->curr.data_xfered;
 	//if (mrq->cmd->error == -ETIMEDOUT)
@@ -322,7 +320,6 @@ msmsdcc_dma_complete_tlet(unsigned long data)
 			host->curr.mrq = NULL;
 			host->curr.cmd = NULL;
 			mrq->data->bytes_xfered = host->curr.data_xfered;
-			del_timer(&host->req_tout_timer);
 			spin_unlock_irqrestore(&host->lock, flags);
 
 			mmc_request_done(host->mmc, mrq);
@@ -509,12 +506,6 @@ msmsdcc_start_command_deferred(struct msmsdcc_host *host,
 	}
 	host->curr.cmd = cmd;
 
-	/*
-	 * Kick the software command timeout timer here.
-	 * Timer expires in 10 secs.
-	 */
-	mod_timer(&host->req_tout_timer,
-			(jiffies + msecs_to_jiffies(MSM_MMC_REQ_TIMEOUT)));
 }
 
 static void
@@ -981,10 +972,6 @@ msmsdcc_irq(int irq, void *dev_id)
 
 			host->curr.cmd = NULL;
 
-			cmd->resp[0] = readl(base + MMCIRESPONSE0);
-			cmd->resp[1] = readl(base + MMCIRESPONSE1);
-			cmd->resp[2] = readl(base + MMCIRESPONSE2);
-			cmd->resp[3] = readl(base + MMCIRESPONSE3);
 			del_timer(&host->command_timer);
 			if (status & MCI_CMDTIMEOUT) {
 #if VERBOSE_COMMAND_TIMEOUTS
@@ -1328,16 +1315,6 @@ static irqreturn_t
 msmsdcc_platform_sdiowakeup_irq(int irq, void *dev_id)
 {
 	pr_info("%s: SDIO Wake up IRQ : %d\n", __func__, irq);
-	spin_lock(&host->lock);
-	if (!host->sdio_irq_disabled) {
-		disable_irq_nosync(irq);
-		if (host->mmc->pm_flags & MMC_PM_WAKE_SDIO_IRQ) {
-			wake_lock(&host->sdio_wlock);
-			disable_irq_wake(irq);
-		}
-		host->sdio_irq_disabled = 1;
-	}
-	spin_unlock(&host->lock);
 
 	return IRQ_HANDLED;
 }
@@ -1779,8 +1756,6 @@ msmsdcc_probe(struct platform_device *pdev)
 		goto irq_free;
 
 	if (plat->sdiowakeup_irq) {
-		wake_lock_init(&host->sdio_wlock, WAKE_LOCK_SUSPEND,
-				mmc_hostname(mmc));
 		ret = request_irq(plat->sdiowakeup_irq,
 			msmsdcc_platform_sdiowakeup_irq,
 			IRQF_SHARED | IRQF_TRIGGER_FALLING,
@@ -1790,12 +1765,7 @@ msmsdcc_probe(struct platform_device *pdev)
 				plat->sdiowakeup_irq, ret);
 			goto irq_free;
 		} else {
-			mmc->pm_caps |= MMC_PM_WAKE_SDIO_IRQ;
 			spin_lock_irqsave(&host->lock, flags);
-			if (!host->sdio_irq_disabled) {
-				disable_irq_nosync(plat->sdiowakeup_irq);
-				host->sdio_irq_disabled = 1;
-			}
 			spin_unlock_irqrestore(&host->lock, flags);
 		}
 	}
@@ -1835,8 +1805,6 @@ msmsdcc_probe(struct platform_device *pdev)
 	host->command_timer.function = msmsdcc_command_expired;
 
 	mmc_set_drvdata(pdev, mmc);
-	setup_timer(&host->req_tout_timer, msmsdcc_req_tout_timer_hdlr,
-			(unsigned long)host);
 	mmc_add_host(mmc);
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
@@ -1890,17 +1858,11 @@ msmsdcc_probe(struct platform_device *pdev)
 	return 0;
 
  platform_irq_free:
-	del_timer_sync(&host->req_tout_timer);
 	if (plat->status_irq)
 		free_irq(plat->status_irq, host);
  sdiowakeup_irq_free:
-	wake_lock_destroy(&host->sdio_suspend_wlock);
 	if (plat->sdiowakeup_irq)
 		free_irq(plat->sdiowakeup_irq, host);
- pio_irq_free:
-	if (plat->sdiowakeup_irq)
-		wake_lock_destroy(&host->sdio_wlock);
-	free_irq(irqres->start, host);
  irq_free:
 	free_irq(irqres->start, host);
  clk_disable:
@@ -1943,7 +1905,6 @@ static int msmsdcc_remove(struct platform_device *pdev)
 	if (!plat->status_irq)
 		sysfs_remove_group(&pdev->dev.kobj, &dev_attr_grp);
 
-	del_timer_sync(&host->req_tout_timer);
 	tasklet_kill(&host->dma_tlet);
 	mmc_remove_host(mmc);
 
@@ -2050,12 +2011,6 @@ msmsdcc_suspend(struct platform_device *dev, pm_message_t state)
 				if (!IS_ERR(host->pclk))
 					clk_disable(host->pclk);
 				host->clks_on = 0;
-			}
-			if ((mmc->pm_flags & MMC_PM_WAKE_SDIO_IRQ) &&
-				mmc->card && mmc->card->type == MMC_TYPE_SDIO) {
-				host->sdio_irq_disabled = 0;
-				enable_irq_wake(host->plat->sdiowakeup_irq);
-				enable_irq(host->plat->sdiowakeup_irq);
 			}
 		}
 
